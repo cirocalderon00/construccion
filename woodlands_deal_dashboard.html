@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Woodlands — Quenaris Venture</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=Syne:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- ── FIREBASE (optional — para compartir con Wichy) ──────────────────────
+  1. console.firebase.google.com → New project "quenaris-woodlands"
+  2. Add Web App → copy firebaseConfig
+  3. Realtime Database → Create → test mode
+  4. Paste config below and uncomment
+─────────────────────────────────────────────────────────────────────────── -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, push, onValue, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+  const firebaseConfig = {
+    apiKey: "AIzaSyCxmRBFg25E_br8SBkqL3MobgkyAEP9Fu8",
+    authDomain: "quenaris-woodlands.firebaseapp.com",
+    databaseURL: "https://quenaris-woodlands-default-rtdb.firebaseio.com",
+    projectId: "quenaris-woodlands",
+  };
+  window._fbReady = false;
+  if (firebaseConfig.apiKey) {
+    try {
+      const app = initializeApp(firebaseConfig);
+      const db  = getDatabase(app);
+      window._db = db; window._ref = ref; window._push = push;
+      window._onValue = onValue; window._remove = remove;
+      window._fbReady = true;
+      document.addEventListener('DOMContentLoaded', () => {
+        const el = document.getElementById('fb-status');
+        if (el) { el.textContent = '🟢 Firebase conectado'; el.style.color = '#16a34a'; }
+      });
+      onValue(ref(db,'reports'), snap => {
+        window._sharedReports = snap.val()
+          ? Object.entries(snap.val()).map(([k,v])=>({...v,fbKey:k})).sort((a,b)=>b.id-a.id)
+          : [];
+        if (document.getElementById('page-historial')?.classList.contains('active')) renderHistory();
+        refreshMapPins();
+        updateBadge();
+      });
+    } catch(e) { console.warn('Firebase:', e); }
+  }
+</script>
+
+<style>
+/* ── RESET ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── TOKENS ── */
+:root {
+  --bg:       #f7f6f2;
+  --surface:  #ffffff;
+  --surface2: #f2f0ec;
+  --border:   rgba(0,0,0,0.09);
+  --border2:  rgba(0,0,0,0.16);
+  --text:     #181714;
+  --muted:    #8c8a84;
+  --muted2:   #5c5a54;
+  --green:    #15803d;
+  --green-bg: rgba(21,128,61,0.07);
+  --green-bd: rgba(21,128,61,0.25);
+  --red:      #b91c1c;
+  --red-bg:   rgba(185,28,28,0.07);
+  --red-bd:   rgba(185,28,28,0.25);
+  --blue:     #1d4ed8;
+  --blue-bg:  rgba(29,78,216,0.07);
+  --amber:    #92400e;
+  --amber-bg: rgba(146,64,14,0.07);
+  --accent:   #2d6a30;
+  --accent2:  #3d8a40;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.05);
+  --shadow:    0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+}
+
+body { background: var(--bg); color: var(--text); font-family: 'Syne', sans-serif; font-size: 14px; min-height: 100vh; }
+
+/* ── NAV ── */
+.nav {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center;
+  padding: 0 48px; gap: 0;
+  position: sticky; top: 0; z-index: 100;
+  box-shadow: var(--shadow-sm);
+}
+.nav-brand { font-family: 'DM Serif Display', serif; font-size: 19px; font-weight: 400; padding: 18px 0; margin-right: 32px; color: var(--text); white-space: nowrap; }
+.nav-brand span { color: var(--accent); }
+.tab { font-size: 11px; font-family: 'DM Mono', monospace; letter-spacing: 0.09em; padding: 20px 16px 16px; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; transition: color 0.18s; white-space: nowrap; user-select: none; }
+.tab:hover { color: var(--muted2); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+#fb-status { font-size: 10px; font-family: 'DM Mono', monospace; color: var(--muted); margin-left: auto; }
+.badge { font-size: 10px; background: var(--green-bg); color: var(--accent); padding: 1px 7px; border-radius: 10px; margin-left: 5px; }
+
+/* ── PAGES ── */
+.page { display: none; padding: 36px 48px 60px; }
+.page.active { display: block; }
+
+/* ── LAYOUT ── */
+.main-grid { display: grid; grid-template-columns: 330px 1fr; gap: 28px; }
+.controls-col { display: flex; flex-direction: column; gap: 16px; }
+.right-col    { display: flex; flex-direction: column; gap: 16px; }
+
+/* ── CARDS ── */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; box-shadow: var(--shadow-sm); }
+.card-title { font-size: 10px; font-family: 'DM Mono', monospace; letter-spacing: 0.13em; color: var(--muted); text-transform: uppercase; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+.card-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+/* ── SLIDERS ── */
+.ctrl-row { margin-bottom: 14px; }
+.ctrl-row:last-child { margin-bottom: 0; }
+.ctrl-label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.ctrl-label span:first-child { font-size: 12px; color: var(--muted2); }
+.ctrl-val { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--accent); font-weight: 500; }
+input[type=range] { -webkit-appearance: none; width: 100%; height: 3px; background: #ddd; border-radius: 2px; outline: none; cursor: pointer; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%; background: var(--accent); cursor: pointer; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.22); }
+
+/* ── INPUTS ── */
+input[type=text], input[type=date], textarea, select {
+  background: #fff; border: 1px solid var(--border2); border-radius: 8px;
+  color: var(--text); font-family: 'Syne', sans-serif; font-size: 13px;
+  padding: 9px 12px; width: 100%; outline: none; transition: border-color 0.18s;
+}
+input[type=text]:focus, input[type=date]:focus, textarea:focus, select:focus { border-color: var(--accent); }
+textarea { resize: vertical; min-height: 64px; }
+
+/* ── METRICS ── */
+.metrics-grid    { display: grid; grid-template-columns: 1fr 1fr;     gap: 10px; }
+.metrics-grid.g3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.metric { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.metric-label { font-size: 10px; color: var(--muted); font-family: 'DM Mono', monospace; letter-spacing: 0.08em; margin-bottom: 6px; }
+.metric-val   { font-family: 'DM Serif Display', serif; font-size: 22px; color: var(--text); line-height: 1; }
+.metric-val.green { color: var(--green); }
+.metric-val.red   { color: var(--red);   }
+.metric-val.blue  { color: var(--blue);  }
+.metric-val.amber { color: var(--amber); }
+.metric-sub { font-size: 10px; color: var(--muted); margin-top: 4px; font-family: 'DM Mono', monospace; }
+
+/* ── TIMELINE ── */
+.timeline { display: flex; margin: 10px 0 4px; }
+.tl-phase { flex: 1; padding: 10px 8px; font-size: 10px; font-family: 'DM Mono', monospace; text-align: center; border: 1px solid var(--border); transition: flex 0.3s; }
+.tl-phase:first-child { border-radius: 6px 0 0 6px; }
+.tl-phase:last-child  { border-radius: 0 6px 6px 0; }
+.tl-phase.holding      { background: var(--blue-bg);  border-color: rgba(29,78,216,0.2);   color: var(--blue);  }
+.tl-phase.construction { background: var(--amber-bg); border-color: rgba(146,64,14,0.2);   color: var(--amber); }
+.tl-phase.sale         { background: var(--green-bg); border-color: rgba(21,128,61,0.2);   color: var(--green); }
+.tl-name { font-weight: 600; margin-bottom: 2px; font-size: 9px; }
+.tl-dur  { font-size: 9px; opacity: 0.7; }
+
+/* ── WATERFALL ── */
+.waterfall  { display: flex; flex-direction: column; gap: 6px; }
+.wf-row     { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 7px; background: var(--surface2); border: 1px solid var(--border); }
+.wf-label   { font-size: 12px; color: var(--muted2); flex: 1; }
+.wf-bar-wrap{ width: 120px; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; flex-shrink: 0; }
+.wf-bar     { height: 100%; border-radius: 3px; transition: width 0.4s; }
+.wf-val     { font-family: 'DM Mono', monospace; font-size: 12px; min-width: 90px; text-align: right; }
+.wf-val.pos { color: var(--green); }
+.wf-val.neg { color: var(--red);   }
+.wf-val.neu { color: var(--amber); }
+.wf-divider { height: 1px; background: var(--border2); margin: 2px 0; }
+
+/* ── SCENARIOS ── */
+.scenarios { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.scenario-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 14px; text-align: center; }
+.scenario-card.best { border-color: var(--green-bd); }
+.scenario-card.base { border-color: var(--border); }
+.sc-tag   { font-size: 9px; font-family: 'DM Mono', monospace; letter-spacing: 0.1em; margin-bottom: 7px; }
+.sc-tag.best { color: var(--green); }
+.sc-tag.base { color: var(--muted); }
+.sc-price { font-family: 'DM Serif Display', serif; font-size: 18px; margin-bottom: 3px; }
+.sc-roi   { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); }
+.sc-net   { font-size: 12px; font-family: 'DM Mono', monospace; margin-top: 5px; }
+
+/* ── INTEREST TABLE ── */
+.int-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.int-row:last-child { border-bottom: none; }
+.int-label { color: var(--muted2); }
+.int-val   { font-family: 'DM Mono', monospace; color: var(--text); }
+.int-val.red { color: var(--red); }
+
+/* ── VERDICT BANNER ── */
+.verdict-banner { border-radius: 12px; padding: 16px 20px; display: flex; align-items: center; gap: 16px; border: 1px solid; }
+.verdict-banner.go   { background: var(--green-bg); border-color: var(--green-bd); }
+.verdict-banner.nogo { background: var(--red-bg);   border-color: var(--red-bd);   }
+.verdict-icon  { font-size: 28px; line-height: 1; }
+.verdict-label { font-size: 11px; font-family: 'DM Mono', monospace; letter-spacing: 0.1em; font-weight: 700; margin-bottom: 3px; }
+.verdict-label.go   { color: var(--green); }
+.verdict-label.nogo { color: var(--red);   }
+.verdict-reason { font-size: 12px; color: var(--muted2); line-height: 1.55; }
+
+/* ── FORM ── */
+.form-row  { margin-bottom: 14px; }
+.form-row:last-child { margin-bottom: 0; }
+.form-label { font-size: 10px; font-family: 'DM Mono', monospace; letter-spacing: 0.09em; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; display: block; }
+.form-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* ── BUTTONS ── */
+.btn { display: inline-flex; align-items: center; gap: 6px; font-family: 'DM Mono', monospace; font-size: 12px; letter-spacing: 0.05em; padding: 9px 20px; border-radius: 8px; cursor: pointer; border: 1px solid; background: none; transition: all 0.18s; }
+.btn-primary { background: var(--green-bg); border-color: var(--green-bd); color: var(--accent); }
+.btn-primary:hover { background: rgba(21,128,61,0.13); }
+.btn-danger  { background: var(--red-bg);   border-color: var(--red-bd);   color: var(--red); }
+.btn-danger:hover  { background: rgba(185,28,28,0.12); }
+.btn-sm { padding: 4px 11px; font-size: 11px; }
+
+/* ── VERDICT SELECTOR ── */
+.verdict-opt { border-radius: 10px; padding: 16px 12px; text-align: center; cursor: pointer; transition: all 0.18s; opacity: 0.38; border: 1px solid; }
+.verdict-opt:hover { opacity: 0.65; }
+
+/* ── REPORT CARDS ── */
+.report-item { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; margin-bottom: 10px; box-shadow: var(--shadow-sm); transition: box-shadow 0.18s; }
+.report-item:hover { box-shadow: var(--shadow); }
+.report-item.go   { border-left: 3px solid var(--green); }
+.report-item.nogo { border-left: 3px solid var(--red);   }
+.report-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.report-addr { font-size: 14px; font-weight: 600; margin-bottom: 3px; }
+.report-date { font-size: 10px; font-family: 'DM Mono', monospace; color: var(--muted); }
+.report-tags { display: flex; gap: 7px; margin-top: 10px; flex-wrap: wrap; }
+.tag { font-size: 10px; font-family: 'DM Mono', monospace; padding: 3px 8px; border-radius: 4px; }
+.tag.green  { background: var(--green-bg); color: var(--green); }
+.tag.red    { background: var(--red-bg);   color: var(--red);   }
+.tag.blue   { background: var(--blue-bg);  color: var(--blue);  }
+.tag.gray   { background: var(--surface2); color: var(--muted2);}
+.tag.purple { background: rgba(109,40,217,0.07); color: #6d28d9; }
+.verdict-badge { font-size: 10px; font-family: 'DM Mono', monospace; padding: 3px 10px; border-radius: 20px; font-weight: 600; white-space: nowrap; }
+.verdict-badge.go   { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-bd); }
+.verdict-badge.nogo { background: var(--red-bg);   color: var(--red);   border: 1px solid var(--red-bd);   }
+
+/* ── MAP ── */
+#map { height: 520px; border-radius: 12px; border: 1px solid var(--border); box-shadow: var(--shadow); }
+.map-legend { display: flex; gap: 14px; font-size: 11px; font-family: 'DM Mono', monospace; color: var(--muted2); }
+.map-legend span { display: flex; align-items: center; gap: 5px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+/* Leaflet popup override */
+.leaflet-popup-content-wrapper { border-radius: 10px !important; box-shadow: var(--shadow) !important; font-family: 'Syne', sans-serif !important; }
+.leaflet-popup-content { margin: 10px 14px !important; font-size: 13px !important; }
+.popup-addr { font-weight: 600; margin-bottom: 4px; }
+.popup-meta { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted2); line-height: 1.6; }
+
+/* ── MISC ── */
+.empty { text-align: center; padding: 60px 20px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: 12px; line-height: 2; }
+.note  { font-size: 10px; color: var(--muted); font-family: 'DM Mono', monospace; text-align: center; padding-top: 8px; line-height: 1.7; }
+.page-header { margin-bottom: 24px; }
+.page-header h2 { font-family: 'DM Serif Display', serif; font-size: 24px; font-weight: 400; margin-bottom: 4px; }
+.page-header p  { font-size: 12px; color: var(--muted); font-family: 'DM Mono', monospace; }
+</style>
+</head>
+<body>
+
+<!-- ══════════════ NAV ══════════════ -->
+<nav class="nav">
+  <div class="nav-brand">Quenaris <span>/ Woodlands</span></div>
+  <div class="tab active"  onclick="showTab('modelo',this)">MODELO</div>
+  <div class="tab"         onclick="showTab('reporte',this)">GUARDAR REPORTE</div>
+  <div class="tab"         onclick="showTab('mapa',this)">MAPA</div>
+  <div class="tab"         onclick="showTab('historial',this)">HISTORIAL<span class="badge" id="badge-count">0</span></div>
+  <span id="fb-status" style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);margin-left:auto;">⚪ Local</span>
+</nav>
+
+<!-- ══════════════════════════════════════════════════ MODELO ══════════════════════════════════════════════════ -->
+<div class="page active" id="page-modelo">
+<div class="main-grid">
+
+  <!-- LEFT: controls -->
+  <div class="controls-col">
+
+    <div class="card">
+      <div class="card-title">Adquisición</div>
+      <div class="ctrl-row">
+        <div class="ctrl-label"><span>Precio de compra</span><span class="ctrl-val" id="v-price">$420,000</span></div>
+        <input type="range" id="s-price" min="200000" max="900000" step="5000" value="420000">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-label"><span>Down payment</span><span class="ctrl-val" id="v-down">25%</span></div>
+        <input type="range" id="s-down" min="15" max="40" step="1" value="25">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-label"><span>Tasa mortgage</span><span class="ctrl-val" id="v-mrate">7.0%</span></div>
+        <input type="range" id="s-mrate" min="55" max="100" step="5" value="70">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Fase 1 — Holding</div>
+      <div class="ctrl-row">
+        <div class="ctrl-label"><span>Meses de holding</span><span class="ctrl-val" id="v-hold">24 meses</span></div>
+        <input type="range" id="s-hold" min="1" max="72" step="1" value="24">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-label"><span>Renta mensual</span><span class="ctrl-val" id="v-rent">$2,600</span></div>
+        <input type="range" id="s-rent" min="1500" max="5000" step="100" value="2600">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-label"><span>Gastos operativos/mes</span><span class="ctrl-val" id="v-opex">$300</span></div>
+        <input type="range" id="s-opex" min="100" max="1000" step="50" value="300">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Fase 2 — Construcción (JV)</div>
+      <div class="ctrl-row">
+        <div class="ctrl-label"><span>Costo construcción</span><span class="ctrl-val" id="v-const">$650,000</span></div>
+        <input type="range" id="s-const" min="300000" max="1200000" step="10000" value="650000">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-label"><span>Tasa LOC Wichy</span><span class="ctrl-val" id="v-locrate">10.0%</span></div>
+        <input type="range" id="s-locrate" min="70" max="150" step="5" value="100">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-label"><span>Duración construcción</span><span class="ctrl-val" id="v-ctime">9 meses</span></div>
+        <input type="range" id="s-ctime" min="6" max="18" step="1" value="9">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-label"><span>Tu % de la utilidad</span><span class="ctrl-val" id="v-split">50%</span></div>
+        <input type="range" id="s-split" min="30" max="70" step="5" value="50">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Venta</div>
+      <div class="ctrl-row">
+        <div class="ctrl-label"><span>Precio de venta objetivo</span><span class="ctrl-val" id="v-sell">$1,500,000</span></div>
+        <input type="range" id="s-sell" min="800000" max="2500000" step="50000" value="1500000">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-label"><span>Comisión / closing costs</span><span class="ctrl-val" id="v-closing">6%</span></div>
+        <input type="range" id="s-closing" min="4" max="10" step="1" value="6">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-label"><span>Tiempo en mercado</span><span class="ctrl-val" id="v-stime">2 meses</span></div>
+        <input type="range" id="s-stime" min="1" max="24" step="1" value="2">
+      </div>
+    </div>
+
+  </div><!-- /controls-col -->
+
+  <!-- RIGHT: results -->
+  <div class="right-col">
+
+    <!-- VERDICT -->
+    <div id="verdict-banner" class="verdict-banner go">
+      <div class="verdict-icon" id="verdict-icon">✓</div>
+      <div>
+        <div class="verdict-label go" id="verdict-label">PROCEDER</div>
+        <div class="verdict-reason" id="verdict-reason">—</div>
+      </div>
+    </div>
+
+    <!-- TIMELINE -->
+    <div class="card">
+      <div class="card-title">Timeline del proyecto</div>
+      <div class="timeline">
+        <div class="tl-phase holding" id="tl-hold" style="flex:24"><div class="tl-name">HOLDING</div><div class="tl-dur" id="tl-hold-dur">24 m</div></div>
+        <div class="tl-phase construction" id="tl-const" style="flex:9"><div class="tl-name">CONSTRUCCIÓN</div><div class="tl-dur" id="tl-const-dur">9 m</div></div>
+        <div class="tl-phase sale" id="tl-sale" style="flex:2"><div class="tl-name">VENTA</div><div class="tl-dur" id="tl-sale-dur">2 m</div></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:8px;">
+        <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">Total: <span id="total-months">35 m</span></span>
+        <span style="font-size:10px;color:var(--accent);font-family:'DM Mono',monospace;">~<span id="total-years">2.9</span> años</span>
+      </div>
+    </div>
+
+    <!-- KEY METRICS -->
+    <div class="metrics-grid g3">
+      <div class="metric"><div class="metric-label">INVERSIÓN PROPIA</div><div class="metric-val blue" id="m-equity">—</div><div class="metric-sub">down payment</div></div>
+      <div class="metric"><div class="metric-label">TU UTILIDAD NETA</div><div class="metric-val green" id="m-net">—</div><div class="metric-sub">después de todo</div></div>
+      <div class="metric"><div class="metric-label">ROI ANUALIZADO</div><div class="metric-val green" id="m-roi">—</div><div class="metric-sub" id="m-roi-sub">por año</div></div>
+      <div class="metric"><div class="metric-label">ROI TOTAL</div><div class="metric-val" id="m-roi-total">—</div><div class="metric-sub" id="m-roi-total-sub">sobre capital</div></div>
+      <div class="metric"><div class="metric-label">INTERESES TOTALES</div><div class="metric-val red" id="m-interest">—</div><div class="metric-sub">mortgage + LOC</div></div>
+      <div class="metric"><div class="metric-label">MARGEN NETO</div><div class="metric-val" id="m-margin">—</div><div class="metric-sub">tu utilidad / precio venta</div></div>
+    </div>
+
+    <!-- WATERFALL -->
+    <div class="card">
+      <div class="card-title">P&amp;L — Waterfall</div>
+      <div class="waterfall">
+        <div class="wf-row"><span class="wf-label">Precio de venta</span><div class="wf-bar-wrap"><div class="wf-bar" id="wb-sell" style="background:#15803d;width:100%"></div></div><span class="wf-val pos" id="wv-sell">$1,500,000</span></div>
+        <div class="wf-divider"></div>
+        <div class="wf-row"><span class="wf-label">— Costo de construcción</span><div class="wf-bar-wrap"><div class="wf-bar" id="wb-const" style="background:#b91c1c;"></div></div><span class="wf-val neg" id="wv-const">—</span></div>
+        <div class="wf-row"><span class="wf-label">— Precio compra (lote/casa)</span><div class="wf-bar-wrap"><div class="wf-bar" id="wb-price" style="background:#b91c1c;"></div></div><span class="wf-val neg" id="wv-price">—</span></div>
+        <div class="wf-row"><span class="wf-label">— Closing costs / comisión</span><div class="wf-bar-wrap"><div class="wf-bar" id="wb-close" style="background:#b91c1c;"></div></div><span class="wf-val neg" id="wv-close">—</span></div>
+        <div class="wf-row"><span class="wf-label">— Intereses mortgage (holding)</span><div class="wf-bar-wrap"><div class="wf-bar" id="wb-mint" style="background:#92400e;"></div></div><span class="wf-val neu" id="wv-mint">—</span></div>
+        <div class="wf-row"><span class="wf-label">— Intereses LOC Wichy</span><div class="wf-bar-wrap"><div class="wf-bar" id="wb-lint" style="background:#92400e;"></div></div><span class="wf-val neu" id="wv-lint">—</span></div>
+        <div class="wf-row"><span class="wf-label">— Gastos operativos (holding)</span><div class="wf-bar-wrap"><div class="wf-bar" id="wb-opex" style="background:#92400e;"></div></div><span class="wf-val neu" id="wv-opex">—</span></div>
+        <div class="wf-row"><span class="wf-label">+ Renta acumulada (holding)</span><div class="wf-bar-wrap"><div class="wf-bar" id="wb-rent" style="background:#1d4ed8;"></div></div><span class="wf-val" style="color:var(--blue)" id="wv-rent">—</span></div>
+        <div class="wf-divider"></div>
+        <div class="wf-row" style="background:rgba(21,128,61,0.05);border-color:rgba(21,128,61,0.18)"><span class="wf-label" style="color:var(--muted2)">= Utilidad bruta del proyecto</span><div class="wf-bar-wrap"><div class="wf-bar" id="wb-gross" style="background:#1d4ed8;"></div></div><span class="wf-val" style="color:var(--blue)" id="wv-gross">—</span></div>
+        <div class="wf-row" style="background:rgba(185,28,28,0.05);border-color:rgba(185,28,28,0.15)"><span class="wf-label" style="color:var(--muted2)">— Parte de Wichy (<span id="wichy-pct">50%</span>)</span><div class="wf-bar-wrap"><div class="wf-bar" id="wb-wichy" style="background:#b91c1c;"></div></div><span class="wf-val neg" id="wv-wichy">—</span></div>
+        <div class="wf-row" style="background:var(--green-bg);border-color:var(--green-bd)"><span class="wf-label" style="color:var(--green);font-weight:600">= Tu parte neta (<span id="my-pct">50%</span>)</span><div class="wf-bar-wrap"><div class="wf-bar" id="wb-net" style="background:#15803d;"></div></div><span class="wf-val pos" id="wv-net">—</span></div>
+      </div>
+    </div>
+
+    <!-- SCENARIOS + INTEREST -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div class="card">
+        <div class="card-title">Escenarios de venta</div>
+        <div class="scenarios">
+          <div class="scenario-card base"><div class="sc-tag base">CONSERVADOR</div><div class="sc-price" id="sc-low">$1.3M</div><div class="sc-net" id="sc-low-net" style="color:var(--muted)">—</div><div class="sc-roi" id="sc-low-roi">ROI: —</div></div>
+          <div class="scenario-card base"><div class="sc-tag base">OBJETIVO</div><div class="sc-price" id="sc-mid">$1.65M</div><div class="sc-net" id="sc-mid-net" style="color:var(--muted)">—</div><div class="sc-roi" id="sc-mid-roi">ROI: —</div></div>
+          <div class="scenario-card best"><div class="sc-tag best">OPTIMISTA</div><div class="sc-price" id="sc-high">$2.0M</div><div class="sc-net" id="sc-high-net" style="color:var(--green)">—</div><div class="sc-roi" id="sc-high-roi">ROI: —</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Desglose de intereses</div>
+        <div class="int-row"><span class="int-label">Mortgage mensual</span><span class="int-val" id="int-monthly">—</span></div>
+        <div class="int-row"><span class="int-label">Interés mortgage (holding)</span><span class="int-val red" id="int-mort-hold">—</span></div>
+        <div class="int-row"><span class="int-label">LOC Wichy mensual</span><span class="int-val" id="int-loc-monthly">—</span></div>
+        <div class="int-row"><span class="int-label">Interés LOC (construcción)</span><span class="int-val red" id="int-loc-total">—</span></div>
+        <div class="int-row"><span class="int-label">Renta cubre hipoteca</span><span class="int-val" id="int-coverage">—</span></div>
+        <div class="int-row"><span class="int-label">Cash flow mensual</span><span class="int-val" id="int-cf">—</span></div>
+        <div class="int-row"><span class="int-label">Total intereses</span><span class="int-val red" id="int-total">—</span></div>
+      </div>
+    </div>
+
+    <div class="note">Modelo estimado. ROI anualizado = (1+ROI total)^(1/años)−1. Interés LOC = saldo promedio × tasa × meses construcción.</div>
+  </div>
+</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ REPORTE ══════════════════════════════════════════════════ -->
+<div class="page" id="page-reporte">
+  <div style="max-width:760px;margin:0 auto;">
+    <div class="page-header">
+      <h2>Guardar análisis de propiedad</h2>
+      <p>Los números se toman del modelo actual. Agrega dirección y veredicto.</p>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-title">Identificación</div>
+      <div class="form-row">
+        <label class="form-label">Dirección completa</label>
+        <input type="text" id="r-address" placeholder="Ej: 26 Sawmill Rd, The Woodlands TX 77380">
+      </div>
+      <div class="form-grid2">
+        <div class="form-row"><label class="form-label">Fecha</label><input type="date" id="r-date"></div>
+        <div class="form-row"><label class="form-label">Fuente / MLS</label><input type="text" id="r-mls" placeholder="HAR, Zillow, Redfin..."></div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">Guardado por</label>
+        <select id="r-author">
+          <option value="Ciro">Ciro (Quenaris)</option>
+          <option value="Wichy">Wichy (Lara Living)</option>
+        </select>
+      </div>
+      <div class="form-row" style="margin-bottom:0">
+        <label class="form-label">Notas de la propiedad</label>
+        <textarea id="r-notes" placeholder="Tamaño del lote, estado de la casa, vecindario, observaciones..."></textarea>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-title">Resumen del modelo actual</div>
+      <div class="metrics-grid g3">
+        <div class="metric"><div class="metric-label">PRECIO COMPRA</div><div class="metric-val blue" id="r-m-price">—</div></div>
+        <div class="metric"><div class="metric-label">VENTA OBJETIVO</div><div class="metric-val" id="r-m-sell">—</div></div>
+        <div class="metric"><div class="metric-label">TU UTILIDAD</div><div class="metric-val green" id="r-m-net">—</div></div>
+        <div class="metric"><div class="metric-label">ROI ANUALIZADO</div><div class="metric-val green" id="r-m-roi">—</div></div>
+        <div class="metric"><div class="metric-label">DURACIÓN TOTAL</div><div class="metric-val" id="r-m-months">—</div></div>
+        <div class="metric"><div class="metric-label">CASH FLOW/MES</div><div class="metric-val" id="r-m-cf">—</div></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-title">¿Procedemos?</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+        <div class="verdict-opt" data-verdict="go"   onclick="selectVerdict('go')"   style="border-color:var(--green-bd);background:var(--green-bg);">
+          <div style="font-size:24px;margin-bottom:6px;">✓</div>
+          <div style="font-size:12px;font-family:'DM Mono',monospace;color:var(--green);font-weight:700;">PROCEDER</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:4px;">Los números funcionan</div>
+        </div>
+        <div class="verdict-opt" data-verdict="nogo" onclick="selectVerdict('nogo')" style="border-color:var(--red-bd);background:var(--red-bg);">
+          <div style="font-size:24px;margin-bottom:6px;">✕</div>
+          <div style="font-size:12px;font-family:'DM Mono',monospace;color:var(--red);font-weight:700;">NO PROCEDER</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:4px;">No justifica el riesgo</div>
+        </div>
+      </div>
+      <div class="form-row" style="margin-bottom:0">
+        <label class="form-label">¿Por qué?</label>
+        <textarea id="r-verdict-notes" placeholder="Razón del veredicto: precio alto, lote chico, mala zona — o buena oportunidad, terreno grande, precio bajo..."></textarea>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;">
+      <span id="save-msg" style="display:none;font-size:11px;font-family:'DM Mono',monospace;color:var(--green);">✓ Guardado</span>
+      <button class="btn btn-primary" onclick="saveReport()">Guardar reporte</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ MAPA ══════════════════════════════════════════════════ -->
+<div class="page" id="page-mapa">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:16px;">
+    <div class="page-header" style="margin-bottom:0">
+      <h2>Mapa — The Woodlands TX</h2>
+      <p>Guarda un reporte con dirección → pin aparece aquí automáticamente</p>
+    </div>
+    <div class="map-legend">
+      <span><span class="dot" style="background:var(--green)"></span> Proceder</span>
+      <span><span class="dot" style="background:var(--red)"></span> No proceder</span>
+    </div>
+  </div>
+  <div id="map"></div>
+  <div id="map-list" style="margin-top:16px;"></div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ HISTORIAL ══════════════════════════════════════════════════ -->
+<div class="page" id="page-historial">
+  <div style="max-width:780px;margin:0 auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;">
+      <div class="page-header" style="margin-bottom:0">
+        <h2>Historial de propiedades</h2>
+        <p><span id="hist-count">0</span> propiedades analizadas</p>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <select id="filter-author"  onchange="renderHistory()" style="width:auto;padding:6px 12px;font-size:11px;">
+          <option value="">Todos</option>
+          <option value="Ciro">Ciro</option>
+          <option value="Wichy">Wichy</option>
+        </select>
+        <select id="filter-verdict" onchange="renderHistory()" style="width:auto;padding:6px 12px;font-size:11px;">
+          <option value="">Todos los veredictos</option>
+          <option value="go">Proceder</option>
+          <option value="nogo">No proceder</option>
+        </select>
+      </div>
+    </div>
+    <div id="history-list"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ JS ══════════════════════════════════════════════════ -->
+<script>
+// ── utils ──
+const fmt  = n => (n>=0?'$':'-$') + Math.abs(Math.round(n)).toLocaleString();
+const fmtK = n => (n>=0?'$':'-$') + Math.round(Math.abs(n)/1000) + 'K';
+
+// ── state ──
+let selectedVerdict = null;
+let localReports = [];
+let geocacheLocal = {};
+try { localReports  = JSON.parse(localStorage.getItem('qv_wl_v3') || '[]'); } catch(e){}
+try { geocacheLocal = JSON.parse(localStorage.getItem('qv_geocache') || '{}'); } catch(e){}
+window._sharedReports = null;
+
+function allReports() {
+  return window._sharedReports ?? localReports;
+}
+
+// ── tabs ──
+function showTab(tab, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('page-' + tab).classList.add('active');
+  if (tab === 'reporte')   syncReportSummary();
+  if (tab === 'historial') renderHistory();
+  if (tab === 'mapa')      initMap();
+}
+
+// ── getVals ──
+function getVals() {
+  return {
+    price:    +document.getElementById('s-price').value,
+    downPct:  +document.getElementById('s-down').value / 100,
+    mrate:    +document.getElementById('s-mrate').value / 10 / 100,
+    hold:     +document.getElementById('s-hold').value,
+    rent:     +document.getElementById('s-rent').value,
+    opex:     +document.getElementById('s-opex').value,
+    constCost:+document.getElementById('s-const').value,
+    locRate:  +document.getElementById('s-locrate').value / 10 / 100,
+    ctime:    +document.getElementById('s-ctime').value,
+    split:    +document.getElementById('s-split').value / 100,
+    sell:     +document.getElementById('s-sell').value,
+    closing:  +document.getElementById('s-closing').value / 100,
+    stime:    +document.getElementById('s-stime').value,
+  };
+}
+
+// ── calcModel ──
+function calcModel(v, sellPrice) {
+  const downAmt = v.price * v.downPct;
+  const loanAmt = v.price - downAmt;
+  const mRateM  = v.mrate / 12;
+  const monthlyPmt = loanAmt * (mRateM * Math.pow(1+mRateM,360)) / (Math.pow(1+mRateM,360)-1);
+  const mortInterest = loanAmt * v.mrate * (v.hold/12);
+  const locInterest  = v.constCost * v.locRate * 0.5 * (v.ctime/12);
+  const rentTotal    = v.rent * v.hold;
+  const opexTotal    = v.opex * v.hold;
+  const closingCost  = sellPrice * v.closing;
+  const totalMonths  = v.hold + v.ctime + v.stime;
+  const years        = totalMonths / 12;
+  const grossProfit  = sellPrice - v.price - v.constCost - closingCost - mortInterest - locInterest - opexTotal + rentTotal;
+  const myNet        = grossProfit * v.split;
+  const wichyNet     = grossProfit * (1 - v.split);
+  const roiTotal     = myNet / downAmt * 100;
+  const roiAnn       = years > 0 ? (Math.pow(1 + roiTotal/100, 1/years) - 1) * 100 : roiTotal;
+  const margin       = myNet / sellPrice * 100;
+  const cashflow     = v.rent - monthlyPmt - v.opex;
+  return { downAmt, loanAmt, monthlyPmt, mortInterest, locInterest, rentTotal, opexTotal, closingCost, grossProfit, myNet, wichyNet, roiTotal, roiAnn, margin, cashflow, totalMonths, years };
+}
+
+// ── auto verdict ──
+function getVerdict(d) {
+  const issues = [], pos = [];
+  if (d.roiAnn < 0)   issues.push('ROI negativo');
+  else if (d.roiAnn < 15) issues.push('ROI bajo (<15%/año)');
+  else pos.push('ROI '+Math.round(d.roiAnn)+'%/año');
+  if (d.cashflow < 0) issues.push('renta no cubre hipoteca');
+  else pos.push('renta cubre hipoteca');
+  if (d.margin < 8)   issues.push('margen muy ajustado');
+  else if (d.margin >= 15) pos.push('margen '+Math.round(d.margin)+'%');
+  if (d.myNet < 0 || d.roiAnn < 0 || issues.length >= 2)
+    return { cls:'nogo', icon:'✕', label:'NO PROCEDER', reason: issues.join(' · ') + '.' };
+  return { cls:'go', icon:'✓', label:'PROCEDER', reason: pos.join(' · ') + '.' };
+}
+
+// ── update ──
+function update() {
+  const v = getVals(); const d = calcModel(v, v.sell);
+  // slider labels
+  document.getElementById('v-price').textContent   = fmt(v.price);
+  document.getElementById('v-down').textContent    = Math.round(v.downPct*100)+'%';
+  document.getElementById('v-mrate').textContent   = (v.mrate*100).toFixed(1)+'%';
+  document.getElementById('v-hold').textContent    = v.hold+' meses';
+  document.getElementById('v-rent').textContent    = fmt(v.rent);
+  document.getElementById('v-opex').textContent    = fmt(v.opex);
+  document.getElementById('v-const').textContent   = fmt(v.constCost);
+  document.getElementById('v-locrate').textContent = (v.locRate*100).toFixed(1)+'%';
+  document.getElementById('v-ctime').textContent   = v.ctime+' meses';
+  document.getElementById('v-split').textContent   = Math.round(v.split*100)+'%';
+  document.getElementById('v-sell').textContent    = fmt(v.sell);
+  document.getElementById('v-closing').textContent = Math.round(v.closing*100)+'%';
+  document.getElementById('v-stime').textContent   = v.stime+' meses';
+  // timeline
+  document.getElementById('tl-hold').style.flex  = v.hold;
+  document.getElementById('tl-const').style.flex = v.ctime;
+  document.getElementById('tl-sale').style.flex  = Math.max(v.stime,1);
+  document.getElementById('tl-hold-dur').textContent  = v.hold+' m';
+  document.getElementById('tl-const-dur').textContent = v.ctime+' m';
+  document.getElementById('tl-sale-dur').textContent  = v.stime+' m';
+  document.getElementById('total-months').textContent = d.totalMonths+' m';
+  document.getElementById('total-years').textContent  = d.years.toFixed(1);
+  // metrics
+  document.getElementById('m-equity').textContent    = fmtK(d.downAmt);
+  document.getElementById('m-net').textContent       = fmtK(d.myNet);
+  document.getElementById('m-net').className         = 'metric-val '+(d.myNet>0?'green':'red');
+  document.getElementById('m-roi').textContent       = Math.round(d.roiAnn)+'%/año';
+  document.getElementById('m-roi').className         = 'metric-val '+(d.roiAnn>15?'green':d.roiAnn>0?'amber':'red');
+  document.getElementById('m-roi-total').textContent = Math.round(d.roiTotal)+'%';
+  document.getElementById('m-roi-total').className   = 'metric-val '+(d.roiTotal>0?'green':'red');
+  document.getElementById('m-roi-total-sub').textContent = 'en '+d.years.toFixed(1)+' años';
+  document.getElementById('m-interest').textContent  = fmtK(d.mortInterest+d.locInterest);
+  document.getElementById('m-margin').textContent    = Math.round(d.margin)+'%';
+  document.getElementById('m-margin').className      = 'metric-val '+(d.margin>20?'green':d.margin>8?'amber':'red');
+  // waterfall
+  const sp = v.sell; const bw = x => Math.max(1, Math.round(Math.abs(x)/sp*100))+'%';
+  const set = (id,val,w) => { document.getElementById('wb-'+id).style.width=w; document.getElementById('wv-'+id).textContent=val; };
+  set('sell',  fmt(v.sell),           '100%');
+  set('const', fmt(-v.constCost),     bw(v.constCost));
+  set('price', fmt(-v.price),         bw(v.price));
+  set('close', fmt(-d.closingCost),   bw(d.closingCost));
+  set('mint',  fmt(-d.mortInterest),  bw(d.mortInterest));
+  set('lint',  fmt(-d.locInterest),   bw(d.locInterest));
+  set('opex',  fmt(-d.opexTotal),     bw(d.opexTotal));
+  set('rent',  '+'+fmt(d.rentTotal),  bw(d.rentTotal));
+  set('gross', fmt(d.grossProfit),    bw(d.grossProfit));
+  document.getElementById('wv-gross').className = 'wf-val '+(d.grossProfit>0?'':'neg');
+  set('wichy', fmt(-d.wichyNet),      bw(d.wichyNet));
+  set('net',   fmt(d.myNet),          bw(d.myNet));
+  document.getElementById('wv-net').className = 'wf-val '+(d.myNet>0?'pos':'neg');
+  document.getElementById('wichy-pct').textContent = Math.round((1-v.split)*100)+'%';
+  document.getElementById('my-pct').textContent    = Math.round(v.split*100)+'%';
+  // scenarios
+  [{id:'low',p:1300000},{id:'mid',p:1650000},{id:'high',p:2100000}].forEach(sc => {
+    const sd = calcModel(v, sc.p);
+    document.getElementById('sc-'+sc.id).textContent     = '$'+(sc.p/1e6).toFixed(2).replace(/\.?0+$/,'')+'M';
+    document.getElementById('sc-'+sc.id+'-net').textContent = fmtK(sd.myNet)+' neto';
+    document.getElementById('sc-'+sc.id+'-roi').textContent = 'ROI/año: '+Math.round(sd.roiAnn)+'%';
+    document.getElementById('sc-'+sc.id+'-net').style.color = sd.myNet>0 ? 'var(--green)' : 'var(--red)';
+  });
+  // interest
+  const locM = v.constCost * v.locRate * 0.5 / 12;
+  document.getElementById('int-monthly').textContent   = fmt(d.monthlyPmt);
+  document.getElementById('int-mort-hold').textContent = fmt(-d.mortInterest);
+  document.getElementById('int-loc-monthly').textContent = fmt(locM);
+  document.getElementById('int-loc-total').textContent = fmt(-d.locInterest);
+  const ok = d.cashflow > 0;
+  document.getElementById('int-coverage').textContent  = ok ? 'Sí ✓' : 'No ✗';
+  document.getElementById('int-coverage').style.color  = ok ? 'var(--green)' : 'var(--red)';
+  document.getElementById('int-cf').textContent        = (d.cashflow>=0?'+':'')+fmt(d.cashflow)+'/mes';
+  document.getElementById('int-cf').style.color        = ok ? 'var(--green)' : 'var(--red)';
+  document.getElementById('int-total').textContent     = fmt(-(d.mortInterest+d.locInterest));
+  // verdict
+  const vrd = getVerdict(d);
+  const banner = document.getElementById('verdict-banner');
+  banner.className = 'verdict-banner '+vrd.cls;
+  document.getElementById('verdict-icon').textContent = vrd.icon;
+  const vl = document.getElementById('verdict-label'); vl.textContent = vrd.label; vl.className = 'verdict-label '+vrd.cls;
+  document.getElementById('verdict-reason').textContent = vrd.reason;
+}
+
+// ── report form ──
+function syncReportSummary() {
+  const v = getVals(); const d = calcModel(v, v.sell);
+  document.getElementById('r-m-price').textContent = fmtK(v.price);
+  document.getElementById('r-m-sell').textContent  = fmtK(v.sell);
+  document.getElementById('r-m-net').textContent   = fmtK(d.myNet);
+  document.getElementById('r-m-net').className     = 'metric-val '+(d.myNet>0?'green':'red');
+  document.getElementById('r-m-roi').textContent   = Math.round(d.roiAnn)+'%/año';
+  document.getElementById('r-m-roi').className     = 'metric-val '+(d.roiAnn>0?'green':'red');
+  document.getElementById('r-m-months').textContent = d.totalMonths+' m';
+  document.getElementById('r-m-cf').textContent    = (d.cashflow>=0?'+':'')+fmtK(d.cashflow)+'/mes';
+  document.getElementById('r-m-cf').style.color    = d.cashflow>=0 ? 'var(--green)' : 'var(--red)';
+  if (!document.getElementById('r-date').value)
+    document.getElementById('r-date').value = new Date().toISOString().split('T')[0];
+}
+
+function selectVerdict(v) {
+  selectedVerdict = v;
+  document.querySelectorAll('.verdict-opt').forEach(el => {
+    const on = el.dataset.verdict === v;
+    el.style.opacity   = on ? '1' : '0.3';
+    el.style.transform = on ? 'scale(1.03)' : 'scale(1)';
+  });
+}
+
+async function saveReport() {
+  const address = document.getElementById('r-address').value.trim();
+  if (!address) { alert('Ingresa la dirección.'); return; }
+  if (!selectedVerdict) { alert('Selecciona un veredicto.'); return; }
+  const v = getVals(); const d = calcModel(v, v.sell);
+  const report = {
+    id: Date.now(),
+    address,
+    date:   document.getElementById('r-date').value || new Date().toISOString().split('T')[0],
+    mls:    document.getElementById('r-mls').value.trim(),
+    author: document.getElementById('r-author').value,
+    notes:  document.getElementById('r-notes').value.trim(),
+    verdict: selectedVerdict,
+    verdictNotes: document.getElementById('r-verdict-notes').value.trim(),
+    params: v,
+    results: {
+      downAmt:    Math.round(d.downAmt),
+      grossProfit:Math.round(d.grossProfit),
+      myNet:      Math.round(d.myNet),
+      roiTotal:   Math.round(d.roiTotal),
+      roiAnn:     Math.round(d.roiAnn),
+      totalMonths:d.totalMonths,
+      cashflow:   Math.round(d.cashflow),
+      margin:     Math.round(d.margin),
+    }
+  };
+  if (window._fbReady) {
+    try { await window._push(window._ref(window._db,'reports'), report); }
+    catch(e) { console.error(e); }
+  } else {
+    localReports.unshift(report);
+    try { localStorage.setItem('qv_wl_v3', JSON.stringify(localReports)); } catch(e){}
+  }
+  updateBadge();
+  const msg = document.getElementById('save-msg');
+  msg.style.display = 'inline';
+  setTimeout(() => msg.style.display = 'none', 2500);
+  // reset
+  ['r-address','r-notes','r-verdict-notes','r-mls'].forEach(id => document.getElementById(id).value = '');
+  selectedVerdict = null;
+  document.querySelectorAll('.verdict-opt').forEach(el => { el.style.opacity='0.38'; el.style.transform='scale(1)'; });
+}
+
+// ── badge ──
+function updateBadge() {
+  document.getElementById('badge-count').textContent = allReports().length;
+}
+
+// ── history ──
+function renderHistory() {
+  const vf = document.getElementById('filter-verdict').value;
+  const af = document.getElementById('filter-author').value;
+  let list = allReports();
+  if (vf) list = list.filter(r => r.verdict === vf);
+  if (af) list = list.filter(r => r.author  === af);
+  document.getElementById('hist-count').textContent = allReports().length;
+  const el = document.getElementById('history-list');
+  const labels = { go:'Proceder', nogo:'No proceder' };
+  if (!list.length) {
+    el.innerHTML = '<div class="empty">◯<br><br>'+(allReports().length===0 ? 'No hay propiedades guardadas.<br>Analiza una propiedad en el modelo y guarda el reporte.' : 'No hay propiedades con ese filtro.')+'</div>';
+    return;
+  }
+  el.innerHTML = list.map(r => {
+    const n = r.results?.myNet ?? r.results?.netProfit ?? 0;
+    return `<div class="report-item ${r.verdict}">
+      <div class="report-header">
+        <div style="flex:1;min-width:0;">
+          <div class="report-addr">${r.address}</div>
+          <div class="report-date">${r.date}${r.mls?' · '+r.mls:''}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:7px;margin-left:10px;flex-shrink:0;">
+          ${r.author?`<span class="tag purple">${r.author}</span>`:''}
+          <span class="verdict-badge ${r.verdict}">${labels[r.verdict]||r.verdict}</span>
+          <button class="btn btn-danger btn-sm" onclick="deleteReport('${r.fbKey||''}',${r.id},event)">✕</button>
+        </div>
+      </div>
+      <div class="report-tags">
+        <span class="tag blue">Compra: $${Math.round(r.params.price/1000)}K</span>
+        <span class="tag blue">Venta: $${(r.params.sell/1e6).toFixed(2).replace(/\.?0+$/,'')}M</span>
+        <span class="tag ${n>0?'green':'red'}">Neto: ${n>=0?'$'+Math.round(n/1000)+'K':'-$'+Math.round(Math.abs(n)/1000)+'K'}</span>
+        <span class="tag ${r.results.roiAnn>15?'green':r.results.roiAnn>0?'gray':'red'}">ROI/año: ${r.results.roiAnn}%</span>
+        <span class="tag ${r.results.cashflow>=0?'green':'red'}">CF: ${r.results.cashflow>=0?'+':''}$${r.results.cashflow}/mes</span>
+        <span class="tag gray">${r.results.totalMonths} meses</span>
+        <span class="tag gray">Margen: ${r.results.margin}%</span>
+      </div>
+      ${r.verdictNotes?`<div style="margin-top:10px;font-size:12px;color:var(--muted2);line-height:1.55;border-top:1px solid var(--border);padding-top:10px;">${r.verdictNotes}</div>`:''}
+      ${r.notes?`<div style="margin-top:6px;font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);line-height:1.5;">${r.notes}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
+async function deleteReport(fbKey, id, e) {
+  e.stopPropagation();
+  if (!confirm('¿Eliminar este reporte?')) return;
+  if (window._fbReady && fbKey) {
+    await window._remove(window._ref(window._db,'reports/'+fbKey));
+  } else {
+    localReports = localReports.filter(r => r.id !== id);
+    try { localStorage.setItem('qv_wl_v3', JSON.stringify(localReports)); } catch(e){}
+    updateBadge(); renderHistory();
+  }
+}
+
+// ── MAP ──
+let mapInstance = null;
+let mapMarkers  = {};   // keyed by report id
+
+function makeIcon(verdict) {
+  const color = verdict === 'go' ? '#15803d' : '#b91c1c';
+  const html = `<div style="
+    width:22px;height:22px;border-radius:50%;
+    background:${color};border:3px solid white;
+    box-shadow:0 2px 8px rgba(0,0,0,0.35);
+    display:flex;align-items:center;justify-content:center;
+    color:white;font-size:11px;font-weight:700;font-family:sans-serif;">
+    ${verdict==='go'?'✓':'✕'}
+  </div>`;
+  return L.divIcon({ className:'', html, iconSize:[22,22], iconAnchor:[11,11], popupAnchor:[0,-14] });
+}
+
+async function geocode(address) {
+  if (geocacheLocal[address]) return geocacheLocal[address];
+  try {
+    const q = encodeURIComponent(address+', TX USA');
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${q}&limit=1&countrycodes=us`);
+    const data = await res.json();
+    if (data?.[0]) {
+      const coords = [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+      geocacheLocal[address] = coords;
+      try { localStorage.setItem('qv_geocache', JSON.stringify(geocacheLocal)); } catch(e){}
+      return coords;
+    }
+  } catch(e){}
+  return null;
+}
+
+function initMap() {
+  if (!mapInstance) {
+    mapInstance = L.map('map', { zoomControl: true }).setView([30.165, -95.462], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a>',
+      maxZoom: 19
+    }).addTo(mapInstance);
+  }
+  setTimeout(() => { mapInstance.invalidateSize(); refreshMapPins(); }, 150);
+}
+
+async function refreshMapPins() {
+  if (!mapInstance) return;
+  const rpts = allReports();
+  const existing = new Set(rpts.map(r => String(r.id)));
+
+  // remove stale markers
+  for (const [id, m] of Object.entries(mapMarkers)) {
+    if (!existing.has(id)) { m.remove(); delete mapMarkers[id]; }
+  }
+
+  const labels = { go:'Proceder', nogo:'No proceder' };
+  const listEl = document.getElementById('map-list');
+  const listItems = [];
+
+  for (const r of rpts) {
+    if (!r.address) continue;
+    const coords = await geocode(r.address);
+    if (!coords) continue;
+
+    // add marker if not yet on map
+    if (!mapMarkers[r.id]) {
+      const n = r.results?.myNet ?? 0;
+      const popup = `
+        <div class="popup-addr">${r.address}</div>
+        <div class="popup-meta">
+          ${labels[r.verdict]||r.verdict}<br>
+          ROI/año: <strong>${r.results?.roiAnn||'—'}%</strong> &nbsp;·&nbsp; Neto: <strong>${n>=0?'$'+Math.round(n/1000)+'K':'-$'+Math.round(Math.abs(n)/1000)+'K'}</strong><br>
+          ${r.author?'Por: '+r.author+'<br>':''}${r.verdictNotes||''}
+        </div>`;
+      mapMarkers[r.id] = L.marker(coords, { icon: makeIcon(r.verdict) })
+        .bindPopup(popup).addTo(mapInstance);
+    }
+
+    const col = r.verdict==='go' ? 'var(--green)' : 'var(--red)';
+    const bg  = r.verdict==='go' ? 'var(--green-bg)' : 'var(--red-bg)';
+    const bd  = r.verdict==='go' ? 'var(--green-bd)' : 'var(--red-bd)';
+    const n   = r.results?.myNet ?? 0;
+    listItems.push(`
+      <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-radius:10px;background:${bg};border:1px solid ${bd};margin-bottom:8px;cursor:pointer;"
+           onclick="mapMarkers[${r.id}]?.openPopup();mapInstance?.setView(mapMarkers[${r.id}]?.getLatLng(),15)">
+        <div style="width:10px;height:10px;border-radius:50%;background:${col};flex-shrink:0;"></div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;margin-bottom:2px;">${r.address}</div>
+          <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);">${r.date}${r.author?' · '+r.author:''} · ${labels[r.verdict]||r.verdict} · ROI/año: ${r.results?.roiAnn||'—'}% · Neto: ${n>=0?'$'+Math.round(n/1000)+'K':'-$'+Math.round(Math.abs(n)/1000)+'K'}</div>
+        </div>
+        <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.address)}" target="_blank" rel="noopener"
+           onclick="event.stopPropagation()"
+           style="font-size:11px;font-family:'DM Mono',monospace;color:var(--blue);text-decoration:none;border:1px solid rgba(29,78,216,0.25);padding:4px 10px;border-radius:6px;white-space:nowrap;flex-shrink:0;">Maps ↗</a>
+      </div>`);
+  }
+
+  if (listEl) listEl.innerHTML = listItems.join('') ||
+    '<div style="text-align:center;padding:24px;font-size:12px;color:var(--muted);font-family:\'DM Mono\',monospace;">Guarda reportes con dirección para ver los pins aquí.</div>';
+}
+
+function refreshMapPinsDebounced() {
+  if (document.getElementById('page-mapa')?.classList.contains('active')) refreshMapPins();
+}
+
+// ── init ──
+document.querySelectorAll('input[type=range]').forEach(el => el.addEventListener('input', update));
+updateBadge();
+update();
+</script>
+</body>
+</html>
